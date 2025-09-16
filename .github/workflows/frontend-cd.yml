@@ -10,7 +10,6 @@ on:
         description: 'Resource Group of the AKS Cluster'
         required: true
 
-# Define environment variables for all jobs
 env:
   ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
 
@@ -36,7 +35,7 @@ jobs:
         with:
           resource-group: ${{ github.event.inputs.aks_resource_group }}
           cluster-name: ${{ github.event.inputs.aks_cluster_name }}
-      
+
       - name: Replace image tag in Kubernetes manifest
         run: |
           sed -i "s|/frontend:.*|/frontend:${{ github.sha }}|g" k8s/frontend.yaml
