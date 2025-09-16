@@ -2,6 +2,10 @@
 
 name: Backend CI - Test, Build and Push Images to ACR
 
+env:
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
+
+on:
 # Trigger the workflow on pushes to the 'main' branch
 # You can also add 'pull_request:' to run on PRs
 on:
@@ -131,14 +135,14 @@ jobs:
     # Build and Push Docker image for Product Service
     - name: Build and Push Product Service Image
       run: |
-        docker build -t ${{ env.ACR_LOGIN_SERVER }}/product_service:latest ./backend/product_service/
-        docker push ${{ env.ACR_LOGIN_SERVER }}/product_service:latest
+        docker build -t ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ github.sha }} ./backend/product_service/
+        docker push ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ github.sha }}
 
     # Build and Push Docker image for Order Service
     - name: Build and Push Order Service Image
       run: |
-        docker build -t ${{ env.ACR_LOGIN_SERVER }}/order_service:latest ./backend/order_service/
-        docker push ${{ env.ACR_LOGIN_SERVER }}/order_service:latest
+       docker build -t ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ github.sha }} ./backend/order_service/
+       docker push ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ github.sha }}
 
     # Logout from Azure for security (runs even if image push fails)
     - name: Logout from Azure
