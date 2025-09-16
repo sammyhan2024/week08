@@ -1,8 +1,11 @@
 # week08/.github/workflows/frontend_ci.yml
-
 name: Frontend CI - Build & Push Image
 
+env:
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
+
 on:
+
   # Manual trigger
   workflow_dispatch:
 
@@ -39,13 +42,13 @@ jobs:
 
     # Login to Azure Container Registry (ACR)
     - name: Login to Azure Container Registry
-      run: az acr login --name ${{ env.ACR_LOGIN_SERVER }}
+      run: az acr login --name ${{ secrets.ACR_NAME }}
 
     # Build and Push Docker image for Frontend
     - name: Build and Push Frontend Image
       run: |
-        docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:latest ./frontend/
-        docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:latest
+        docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }} ./frontend/
+        docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }}
 
     # Logout from Azure for security (runs even if image push fails)
     - name: Logout from Azure
