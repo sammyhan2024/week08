@@ -1,5 +1,7 @@
 # week08/backend/product_service/app/main.py
 
+# Triggering the CI pipeline
+
 import logging
 import os
 import sys
