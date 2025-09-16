@@ -31,9 +31,6 @@ jobs:
       - name: Login to Azure Container Registry
         run: az acr login --name ${{ secrets.ACR_NAME }}
 
-      # Note: This workflow assumes the image was already built and pushed by the CI pipeline.
-      # This CD pipeline's job is to deploy the Kubernetes manifests.
-
       - name: Set Kubernetes context
         uses: azure/aks-set-context@v3
         with:
