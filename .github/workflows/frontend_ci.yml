@@ -1,56 +1,42 @@
-# week08/.github/workflows/frontend_ci.yml
 name: Frontend CI - Build & Push Image
 
-env:
-  ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
-
 on:
-
   # Manual trigger
   workflow_dispatch:
 
-  # Automatically on pushes to main branch
+  # Automatic trigger on pushes to the main branch
   push:
     branches:
       - main
-    paths: # Only trigger if changes are in the frontend directory
+    paths: # Only trigger if changes are in the frontend directory or this file
       - 'frontend/**'
-      - '.github/workflows/frontend_ci.yml' # Trigger if this workflow file changes
+      - '.github/workflows/frontend_ci.yml'
 
-# Define global environment variables that can be used across jobs
+# Define environment variables for all jobs
 env:
-  # ACR Login Server (e.g., myregistry.azurecr.io)
-  # This needs to be set as a GitHub Repository Secret
-  ACR_LOGIN_SERVER: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
-  # Dynamically generate image tags based on Git SHA and GitHub Run ID
-  # This provides unique, traceable tags for each image build
-  IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
 
 jobs:
   build_and_push_frontend:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    # Azure login using a Service Principal secret
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    # Login to Azure Container Registry (ACR)
-    - name: Login to Azure Container Registry
-      run: az acr login --name ${{ secrets.ACR_NAME }}
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ secrets.ACR_NAME }}
 
-    # Build and Push Docker image for Frontend
-    - name: Build and Push Frontend Image
-      run: |
-        docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }} ./frontend/
-        docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }}
+      - name: Build and Push Frontend Image
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }} ./frontend/
+          docker push ${{ env.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }}
 
-    # Logout from Azure for security (runs even if image push fails)
-    - name: Logout from Azure
-      run: az logout
-      if: always()
+      - name: Logout from Azure
+        if: always() # This step runs even if the job fails
+        run: az logout
