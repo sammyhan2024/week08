@@ -1,0 +1,230 @@
+name: Backend CI/CD - Improved Consolidated Workflow
+
+# IMPROVEMENT 1: Modern branching strategy with PR validation
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  
+  # NEW: Pull request validation (addresses Issue 2)
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  
+  # Manual deployment trigger with inputs
+  workflow_dispatch:
+    inputs:
+      aks_cluster_name:
+        description: 'Name of the AKS Cluster to deploy to'
+        required: true
+        default: '<aks_cluster_name>'
+      aks_resource_group:
+        description: 'Resource Group of the AKS Cluster'
+        required: true
+        default: '<resource_group_name>'
+      aks_acr_name:
+        description: 'Name of ACR'
+        required: true
+        default: '<acr_name>'
+
+env:
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
+
+jobs:
+  # IMPROVEMENT 2: Consolidated testing (runs on both push and PR)
+  test_and_lint:
+    runs-on: ubuntu-latest
+    
+    services:
+      product_db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: products
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      order_db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: orders
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest httpx
+          for req in backend/*/requirements.txt; do
+            echo "Installing $req"
+            pip install -r "$req"
+          done
+
+      - name: Run product_service tests
+        working-directory: backend/product_service
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: products
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        run: pytest tests --maxfail=1 --disable-warnings -q
+      
+      - name: Run order_service tests
+        working-directory: backend/order_service
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5433
+          POSTGRES_DB: orders
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        run: pytest tests --maxfail=1 --disable-warnings -q
+
+  # IMPROVEMENT 3: Conditional build (only on main, not PR)
+  build_and_push:
+    runs-on: ubuntu-latest
+    needs: test_and_lint
+    # CONDITIONAL: Only build on merge to main, not on PR
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    
+    # IMPROVEMENT 4: Output image tag for deployment
+    outputs:
+      image_tag: ${{ steps.vars.outputs.sha }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # IMPROVEMENT 5: Reduced duplication - single Azure login
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Set image tag output
+        id: vars
+        run: echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Build and Push Product Service Image
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ github.sha }} ./backend/product_service/
+          docker push ${{ env.ACR_LOGIN_SERVER }}/product_service:${{ github.sha }}
+
+      - name: Build and Push Order Service Image
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ github.sha }} ./backend/order_service/
+          docker push ${{ env.ACR_LOGIN_SERVER }}/order_service:${{ github.sha }}
+
+      - name: Logout from Azure
+        if: always()
+        run: az logout
+
+  # IMPROVEMENT 6: Linked deployment with version consistency
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build_and_push
+    # Only deploy when manually triggered
+    if: github.event_name == 'workflow_dispatch'
+    environment: Production
+    
+    outputs:
+      PRODUCT_API_IP: ${{ steps.get_product_ip.outputs.external_ip }}
+      ORDER_API_IP: ${{ steps.get_order_ip.outputs.external_ip }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          enable-AzPSSession: true
+
+      - name: Set Kubernetes context
+        run: |
+          az aks get-credentials --resource-group ${{ github.event.inputs.aks_resource_group }} --name ${{ github.event.inputs.aks_cluster_name }} --overwrite-existing
+
+      # IMPROVEMENT 7: Automatic image tag update using build output
+      - name: Update image tags in manifests
+        run: |
+          echo "Updating manifests with image tag: ${{ needs.build_and_push.outputs.image_tag }}"
+          sed -i 's|image: ${{ secrets.ACR_NAME }}.azurecr.io/product_service:.*|image: ${{ secrets.ACR_NAME }}.azurecr.io/product_service:${{ needs.build_and_push.outputs.image_tag }}|' k8s/product-service.yaml
+          sed -i 's|image: ${{ secrets.ACR_NAME }}.azurecr.io/order_service:.*|image: ${{ secrets.ACR_NAME }}.azurecr.io/order_service:${{ needs.build_and_push.outputs.image_tag }}|' k8s/order-service.yaml
+          echo "--- Updated product-service.yaml ---"
+          grep "image:" k8s/product-service.yaml
+          echo "--- Updated order-service.yaml ---"
+          grep "image:" k8s/order-service.yaml
+
+      - name: Deploy Backend Infrastructure
+        run: |
+          echo "Deploying backend infrastructure..."
+          cd k8s/
+          kubectl apply -f configmaps.yaml
+          kubectl apply -f secrets.yaml
+          kubectl apply -f product-db.yaml
+          kubectl apply -f order-db.yaml
+
+      - name: Deploy Backend Microservices
+        run: |
+          echo "Deploying backend microservices with updated images..."
+          cd k8s/
+          kubectl apply -f product-service.yaml
+          kubectl apply -f order-service.yaml
+      
+      - name: Wait for Backend LoadBalancer IPs
+        run: |
+          echo "Waiting for LoadBalancer IPs..."
+          for i in $(seq 1 60); do
+            PRODUCT_IP=$(kubectl get service product-service-w08e1 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            ORDER_IP=$(kubectl get service order-service-w08e1 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [[ -n "$PRODUCT_IP" && -n "$ORDER_IP" ]]; then
+              echo "Product Service IP: $PRODUCT_IP"
+              echo "Order Service IP: $ORDER_IP"
+              echo "PRODUCT_IP=$PRODUCT_IP" >> $GITHUB_ENV
+              echo "ORDER_IP=$ORDER_IP" >> $GITHUB_ENV
+              break
+            fi
+            sleep 5
+          done
+
+      - name: Capture Product Service IP for Output
+        id: get_product_ip
+        run: echo "external_ip=${{ env.PRODUCT_IP }}" >> $GITHUB_OUTPUT
+      
+      - name: Capture Order Service IP for Output
+        id: get_order_ip
+        run: echo "external_ip=${{ env.ORDER_IP }}" >> $GITHUB_OUTPUT
+
+      - name: Logout from Azure
+        if: always()
+        run: az logout
